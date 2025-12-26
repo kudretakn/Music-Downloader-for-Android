@@ -465,6 +465,28 @@ fun HistoryScreen() {
     val database = remember { AppDatabase.getDatabase(context) }
     val historyList by database.downloadDao().getAll().collectAsState(initial = emptyList())
 
+    fun openFile(filePath: String) {
+        try {
+            val file = java.io.File(filePath)
+            if (file.exists()) {
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.provider",
+                    file
+                )
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                val mimeType = if (filePath.endsWith(".mp3")) "audio/*" else "video/*"
+                intent.setDataAndType(uri, mimeType)
+                intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.startActivity(intent)
+            } else {
+                Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Cannot open file: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text(
             text = "Download History",
@@ -486,7 +508,9 @@ fun HistoryScreen() {
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = CardDark),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { openFile(item.filePath) }
                     ) {
                         Row(
                             modifier = Modifier
@@ -525,6 +549,8 @@ fun HistoryScreen() {
                                     fontSize = 12.sp
                                 )
                             }
+                            
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.Gray)
                         }
                     }
                 }
