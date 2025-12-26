@@ -115,11 +115,26 @@ object YoutubeDLClient {
         return "%02d:%02d".format(m, s)
     }
 
-    fun download(url: String, dir: File, formatId: String, callback: (Float, Long, String) -> Unit): Result<DownloadResult> {
+    const val FORMAT_MP3 = "MP3"
+    const val FORMAT_MP4_1080 = "MP4_1080"
+
+    fun download(url: String, dir: File, formatParam: String, callback: (Float, Long, String) -> Unit): Result<DownloadResult> {
         return try {
             val request = YoutubeDLRequest(url)
             request.addOption("-o", "${dir.absolutePath}/%(title)s.%(ext)s")
-            request.addOption("-f", formatId)
+            
+            if (formatParam == FORMAT_MP3) {
+                request.addOption("-x") // Extract audio
+                request.addOption("--audio-format", "mp3")
+                request.addOption("--audio-quality", "0") // Best quality
+            } else if (formatParam == FORMAT_MP4_1080) {
+                 // Best video <= 1080p + best audio, merge them.
+                 // Fallback to best single file <= 1080p.
+                 request.addOption("-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]")
+            } else {
+                // Specific format ID (fallback provided)
+                request.addOption("-f", formatParam)
+            }
             
             YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, line ->
                 callback(progress, etaInSeconds, line ?: "")
@@ -127,7 +142,7 @@ object YoutubeDLClient {
             
             // Best guess for the file
             val downloadedFile = dir.listFiles()?.maxByOrNull { it.lastModified() } ?: dir
-            Result.success(DownloadResult(downloadedFile, downloadedFile.nameWithoutExtension, formatId))
+            Result.success(DownloadResult(downloadedFile, downloadedFile.nameWithoutExtension, formatParam))
         } catch (e: Exception) {
             Log.e(TAG, "Download failed", e)
             Result.failure(e)

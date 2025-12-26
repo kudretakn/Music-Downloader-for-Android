@@ -370,46 +370,85 @@ fun SearchItemCard(video: SearchResult, onClick: () -> Unit) {
 fun FormatSelectionDialog(
     video: VideoDetail,
     onDismiss: () -> Unit,
-    onFormatSelected: (VideoFormat) -> Unit
+    onFormatSelected: (com.example.ytmusicdownloader.data.VideoFormat) -> Unit
 ) {
+    // Note: VideoFormat is now just a dummy carrier for the type string since we simplified the logic
+    
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CardDark,
         title = {
-            Text(text = "Select Quality", color = NeonCyan)
+            Text(text = "Choose Format", color = NeonCyan)
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                  Text(text = video.title, color = Color.White, fontSize = 14.sp, maxLines = 2)
-                 Spacer(modifier = Modifier.height(16.dp))
-                 LazyColumn(
-                     modifier = Modifier.heightIn(max = 300.dp)
+                 Spacer(modifier = Modifier.height(24.dp))
+                 
+                 Row(
+                     modifier = Modifier.fillMaxWidth(),
+                     horizontalArrangement = Arrangement.SpaceEvenly
                  ) {
-                     items(video.formats) { format ->
-                         Row(
-                             modifier = Modifier
-                                 .fillMaxWidth()
-                                 .clickable { onFormatSelected(format) }
-                                 .padding(vertical = 12.dp),
-                             horizontalArrangement = Arrangement.SpaceBetween
-                         ) {
-                             Column {
-                                 Text(text = format.description, color = Color.White, fontWeight = FontWeight.Bold)
-                                 format.note?.let {
-                                     Text(text = it, color = Color.Gray, fontSize = 12.sp)
-                                 }
-                             }
-                             if (format.fileSize != null && format.fileSize > 0) {
-                                  Text(
-                                     text = "%.1f MB".format(format.fileSize / 1024f / 1024f),
-                                     color = NeonPink,
-                                     fontSize = 12.sp
+                     // MP3 Button
+                     Button(
+                         onClick = { 
+                             onFormatSelected(
+                                 com.example.ytmusicdownloader.data.VideoFormat(
+                                     formatId = YoutubeDLClient.FORMAT_MP3, 
+                                     ext = "mp3", 
+                                     resolution = null, 
+                                     fileSize = null, 
+                                     acodec = null, 
+                                     vcodec = null, 
+                                     note = "Best Audio"
                                  )
-                             }
+                             ) 
+                         },
+                         colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = DarkBlue),
+                         shape = RoundedCornerShape(12.dp),
+                         modifier = Modifier.weight(1f).height(50.dp)
+                     ) {
+                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                             Icon(Icons.Rounded.MusicNote, null)
+                             Text("MP3", fontWeight = FontWeight.Bold)
                          }
-                         HorizontalDivider(color = Color.DarkGray)
+                     }
+                     
+                     Spacer(modifier = Modifier.width(16.dp))
+                     
+                     // MP4 Button
+                     Button(
+                         onClick = { 
+                             onFormatSelected(
+                                 com.example.ytmusicdownloader.data.VideoFormat(
+                                     formatId = YoutubeDLClient.FORMAT_MP4_1080, 
+                                     ext = "mp4", 
+                                     resolution = "1080p", 
+                                     fileSize = null, 
+                                     acodec = null, 
+                                     vcodec = null, 
+                                     note = "Max 1080p"
+                                 )
+                             ) 
+                         },
+                         colors = ButtonDefaults.buttonColors(containerColor = NeonPink, contentColor = DarkBlue),
+                         shape = RoundedCornerShape(12.dp),
+                         modifier = Modifier.weight(1f).height(50.dp)
+                     ) {
+                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                             Icon(Icons.Rounded.Videocam, null)
+                             Text("MP4", fontWeight = FontWeight.Bold)
+                         }
                      }
                  }
+                 
+                 Spacer(modifier = Modifier.height(16.dp))
+                 Text(
+                     text = "MP4 will verify/download best quality up to 1080p", 
+                     color = Color.Gray, 
+                     fontSize = 10.sp,
+                     modifier = Modifier.align(Alignment.CenterHorizontally)
+                 )
             }
         },
         confirmButton = {
