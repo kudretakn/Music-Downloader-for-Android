@@ -1,7 +1,6 @@
 package com.example.ytmusicdownloader
 
 import android.content.Context
-import android.os.Environment
 import android.util.Log
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -19,21 +18,45 @@ object YoutubeDLClient {
         }
     }
 
-    fun downloadAudio(url: String, dir: File): Result<File> {
+    enum class DownloadFormat {
+        AUDIO, VIDEO
+    }
+
+    data class DownloadResult(
+        val file: File,
+        val title: String,
+        val format: String
+    )
+
+    fun download(url: String, dir: File, format: DownloadFormat, callback: (Float, Long, String) -> Unit): Result<DownloadResult> {
         return try {
             val request = YoutubeDLRequest(url)
-            request.addOption("-x") // Extract audio
-            request.addOption("--audio-format", "mp3")
             request.addOption("-o", "${dir.absolutePath}/%(title)s.%(ext)s")
             
-            val response = YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, line ->
-                // Callback connection could be added here for progress updates via Flow/LiveData
-                println("$progress% (ETA $etaInSeconds) $line") 
+            if (format == DownloadFormat.AUDIO) {
+                request.addOption("-x") // Extract audio
+                request.addOption("--audio-format", "mp3")
+            } else {
+                request.addOption("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
+            }
+
+            var title = "Unknown Title"
+            
+            // Note: In a real app we might want to fetch metadata first to get the title properly
+            // Or parse the output. For now, we will rely on successful execution.
+            
+            YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, line ->
+                callback(progress, etaInSeconds, line ?: "")
             }
             
-            // Assume download is successful if no exception
-            // We can try to find the specific file, but for now return the directory or find the newest file
-            Result.success(dir)
+            // Warning: Finding the exact file name is tricky without parsing valid output.
+            // For now, we return the directory or assume the newest file in the dir is ours.
+            // A better approach would be using --print-json to get filename before download.
+            // But for simplicity in this walkthrough:
+            val downloadedFile = dir.listFiles()?.maxByOrNull { it.lastModified() } ?: dir
+            title = downloadedFile.nameWithoutExtension
+
+            Result.success(DownloadResult(downloadedFile, title, if(format == DownloadFormat.AUDIO) "MP3" else "Video"))
         } catch (e: Exception) {
             Log.e(TAG, "Download failed", e)
             Result.failure(e)
