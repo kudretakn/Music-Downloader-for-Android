@@ -59,7 +59,8 @@ val CardDark = Color(0xFF1E243D)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        YoutubeDLClient.init(applicationContext)
+        super.onCreate(savedInstanceState)
+        // YoutubeDLClient.init moved to AppContent to run in background
 
         setContent {
             MaterialTheme(
@@ -84,8 +85,30 @@ class MainActivity : ComponentActivity() {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppContent() {
+    val context = LocalContext.current
+    var isInitialized by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            YoutubeDLClient.init(context)
+            isInitialized = true
+        }
+    }
+
+    if (!isInitialized) {
+        Box(modifier = Modifier.fillMaxSize().background(DarkBlue), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = NeonCyan)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Initializing Audio Engine...", color = Color.White)
+            }
+        }
+        return
+    }
+
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Download", "History")
 
