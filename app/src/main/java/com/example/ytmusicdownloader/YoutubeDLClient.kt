@@ -2,6 +2,7 @@ package com.example.ytmusicdownloader
 
 import android.content.Context
 import android.util.Log
+import com.yausername.youtubedl_android.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import java.io.File
@@ -12,6 +13,7 @@ object YoutubeDLClient {
     fun init(context: Context) {
         try {
             YoutubeDL.getInstance().init(context)
+            FFmpeg.getInstance().init(context)
             YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.STABLE)
         } catch (e: Exception) {
             Log.e(TAG, "failed to initialize youtubedl-android", e)
