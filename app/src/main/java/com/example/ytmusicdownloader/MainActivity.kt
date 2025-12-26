@@ -39,6 +39,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.ytmusicdownloader.data.AppDatabase
 import com.example.ytmusicdownloader.data.DownloadItem
+import com.example.ytmusicdownloader.data.SearchResult
+import com.example.ytmusicdownloader.data.VideoDetail
+import com.example.ytmusicdownloader.data.VideoFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -134,12 +137,15 @@ fun AppContent() {
 
 @Composable
 fun DownloadScreen() {
-    var url by remember { mutableStateOf("") }
-    var isDownloading by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var isProcessing by remember { mutableStateOf(false) } // General loading state
     var progress by remember { mutableStateOf(0f) }
-    var statusMessage by remember { mutableStateOf("Ready to start") }
-    var isVideo by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf("Ready to search or download") }
     
+    var searchResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var selectedVideoDetail by remember { mutableStateOf<VideoDetail?>(null) }
+    var showFormatDialog by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val database = remember { AppDatabase.getDatabase(context) }
@@ -150,172 +156,268 @@ fun DownloadScreen() {
         if (isGranted) Toast.makeText(context, "Permission Granted", Toast.LENGTH_SHORT).show()
     }
 
+    fun startDownload(video: VideoDetail, formatId: String) {
+        if (android.os.Build.VERSION.SDK_INT < 29 && 
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
+        }
+        
+        showFormatDialog = false
+        isProcessing = true
+        progress = 0f
+        statusMessage = "Starting download..."
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val result = YoutubeDLClient.download(video.id, downloadsDir, formatId) { prog, _, line ->
+                    progress = prog / 100f
+                    statusMessage = line
+                }
+                
+                if (result.isSuccess) {
+                    val item = result.getOrThrow()
+                    database.downloadDao().insert(
+                        DownloadItem(
+                            title = item.title,
+                            format = item.format,
+                            filePath = item.file.absolutePath
+                        )
+                    )
+                    statusMessage = "Success! Saved to Downloads."
+                    // Reset UI slightly but keep success message
+                } else {
+                    statusMessage = "Error: ${result.exceptionOrNull()?.message}"
+                }
+            } catch (e: Exception) {
+                statusMessage = "Failed: ${e.message}"
+            } finally {
+                isProcessing = false
+                progress = 0f
+            }
+        }
+    }
+
+    fun fetchVideoInfo(urlOrId: String) {
+        isProcessing = true
+        statusMessage = "Fetching video info..."
+        scope.launch(Dispatchers.IO) {
+            val result = YoutubeDLClient.getVideoInfo(urlOrId)
+            withContext(Dispatchers.Main) {
+                isProcessing = false
+                if (result.isSuccess) {
+                    selectedVideoDetail = result.getOrThrow()
+                    showFormatDialog = true
+                } else {
+                    statusMessage = "Error fetching info: ${result.exceptionOrNull()?.message}"
+                }
+            }
+        }
+    }
+
+    fun performSearch() {
+        if (query.isBlank()) return
+        
+        // If query looks like a URL, fetch info directly
+        if (query.contains("youtube.com") || query.contains("youtu.be")) {
+            fetchVideoInfo(query)
+            return
+        }
+
+        isProcessing = true
+        statusMessage = "Searching YouTube..."
+        searchResults = emptyList() // Clear previous results
+        
+        scope.launch(Dispatchers.IO) {
+            val result = YoutubeDLClient.search(query)
+            withContext(Dispatchers.Main) {
+                isProcessing = false
+                if (result.isSuccess) {
+                    searchResults = result.getOrThrow()
+                    if (searchResults.isEmpty()) statusMessage = "No results found."
+                    else statusMessage = "Found ${searchResults.size} videos."
+                } else {
+                    statusMessage = "Search failed: ${result.exceptionOrNull()?.message}"
+                }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = "YTDL Premium",
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold,
-            brush = Brush.horizontalGradient(listOf(NeonCyan, NeonPink))
+            style = MaterialTheme.typography.headlineLarge.copy(
+                brush = Brush.horizontalGradient(listOf(NeonCyan, NeonPink))
+            ),
+            fontWeight = FontWeight.Bold
         )
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        // Input Card
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = CardDark),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("Paste YouTube Link") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = NeonCyan,
-                        unfocusedBorderColor = Color.Gray,
-                        focusedLabelColor = NeonCyan
-                    )
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Download Format:", color = Color.White)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilterChip(
-                            selected = !isVideo,
-                            onClick = { isVideo = false },
-                            label = { Text("Audio (MP3)") },
-                            leadingIcon = { Icon(Icons.Rounded.MusicNote, null) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = NeonCyan.copy(alpha = 0.2f),
-                                selectedLabelColor = NeonCyan
-                            )
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        FilterChip(
-                            selected = isVideo,
-                            onClick = { isVideo = true },
-                            label = { Text("Video (MP4)") },
-                            leadingIcon = { Icon(Icons.Rounded.Videocam, null) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = NeonPink.copy(alpha = 0.2f),
-                                selectedLabelColor = NeonPink
-                            )
-                        )
-                    }
+        // Search Input
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Search or Paste Link") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            trailingIcon = {
+                IconButton(onClick = { performSearch() }) {
+                    Icon(Icons.Default.Search, contentDescription = "Search", tint = NeonCyan)
                 }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Download Button
-        val animatedProgress by animateFloatAsState(targetValue = progress, label = "Progress")
-
-        Box(contentAlignment = Alignment.Center) {
-             Button(
-                onClick = {
-                    if (url.isNotBlank()) {
-                        if (android.os.Build.VERSION.SDK_INT < 29 && 
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                            return@Button
-                        }
-                        
-                        isDownloading = true
-                        progress = 0f
-                        statusMessage = "Initializing..."
-                        
-                        scope.launch(Dispatchers.IO) {
-                            try {
-                                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                val format = if(isVideo) YoutubeDLClient.DownloadFormat.VIDEO else YoutubeDLClient.DownloadFormat.AUDIO
-                                
-                                val result = YoutubeDLClient.download(url, downloadsDir, format) { prog, _, line ->
-                                    progress = prog / 100f
-                                    statusMessage = line
-                                }
-                                
-                                if (result.isSuccess) {
-                                    val item = result.getOrThrow()
-                                    database.downloadDao().insert(
-                                        DownloadItem(
-                                            title = item.title,
-                                            format = item.format,
-                                            filePath = item.file.absolutePath
-                                        )
-                                    )
-                                    statusMessage = "Success! Saved to Downloads."
-                                    url = ""
-                                } else {
-                                    statusMessage = "Error: ${result.exceptionOrNull()?.message}"
-                                }
-                            } catch (e: Exception) {
-                                statusMessage = "Failed: ${e.message}"
-                            } finally {
-                                isDownloading = false
-                                progress = 0f
-                            }
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(12.dp),
-                enabled = !isDownloading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isVideo) NeonPink else NeonCyan,
-                    contentColor = DarkBlue
-                )
-            ) {
-                if (isDownloading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = DarkBlue,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Processing...")
-                } else {
-                    Icon(Icons.Default.Download, null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("START DOWNLOAD", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = NeonCyan,
+                unfocusedBorderColor = Color.Gray,
+                focusedLabelColor = NeonCyan
+            )
+        )
         
-        if(isDownloading) {
-            Spacer(modifier = Modifier.height(16.dp))
-            LinearProgressIndicator(
-                progress = { animatedProgress },
-                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                color = if(isVideo) NeonPink else NeonCyan,
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Status / Loading
+        if (isProcessing) {
+             LinearProgressIndicator(
+                progress = { if (progress > 0) progress else 0f }, // Show indeterminate if 0
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                color = NeonPink,
                 trackColor = CardDark,
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = statusMessage,
-                color = Color.LightGray,
-                fontSize = 12.sp,
-                maxLines = 1
-            )
+        }
+        
+        Text(
+            text = statusMessage,
+            color = Color.LightGray,
+            fontSize = 12.sp,
+            maxLines = 1
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Results List
+        if (searchResults.isNotEmpty() && !isProcessing) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(searchResults) { video ->
+                    SearchItemCard(video) {
+                        fetchVideoInfo(video.videoId)
+                    }
+                }
+            }
         }
     }
+
+    if (showFormatDialog && selectedVideoDetail != null) {
+        FormatSelectionDialog(
+            video = selectedVideoDetail!!,
+            onDismiss = { showFormatDialog = false },
+            onFormatSelected = { format ->
+                startDownload(selectedVideoDetail!!, format.formatId)
+            }
+        )
+    }
+}
+
+@Composable
+fun SearchItemCard(video: SearchResult, onClick: () -> Unit) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardDark),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Thumbnail placeholder (Icon for now as loading URL images requires coil)
+            Box(
+                modifier = Modifier
+                    .size(80.dp, 60.dp)
+                    .background(Color.Black, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                 Icon(Icons.Rounded.Videocam, null, tint = Color.Gray)
+            }
+            
+            Spacer(modifier = Modifier.width(16.dp))
+            
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = video.title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${video.channel} • ${video.duration}",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun FormatSelectionDialog(
+    video: VideoDetail,
+    onDismiss: () -> Unit,
+    onFormatSelected: (VideoFormat) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardDark,
+        title = {
+            Text(text = "Select Quality", color = NeonCyan)
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                 Text(text = video.title, color = Color.White, fontSize = 14.sp, maxLines = 2)
+                 Spacer(modifier = Modifier.height(16.dp))
+                 LazyColumn(
+                     modifier = Modifier.heightIn(max = 300.dp)
+                 ) {
+                     items(video.formats) { format ->
+                         Row(
+                             modifier = Modifier
+                                 .fillMaxWidth()
+                                 .clickable { onFormatSelected(format) }
+                                 .padding(vertical = 12.dp),
+                             horizontalArrangement = Arrangement.SpaceBetween
+                         ) {
+                             Column {
+                                 Text(text = format.description, color = Color.White, fontWeight = FontWeight.Bold)
+                                 format.note?.let {
+                                     Text(text = it, color = Color.Gray, fontSize = 12.sp)
+                                 }
+                             }
+                             if (format.fileSize != null && format.fileSize > 0) {
+                                  Text(
+                                     text = "%.1f MB".format(format.fileSize / 1024f / 1024f),
+                                     color = NeonPink,
+                                     fontSize = 12.sp
+                                 )
+                             }
+                         }
+                         HorizontalDivider(color = Color.DarkGray)
+                     }
+                 }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color.Gray)
+            }
+        }
+    )
 }
 
 @Composable

@@ -28,35 +28,106 @@ object YoutubeDLClient {
         val format: String
     )
 
-    fun download(url: String, dir: File, format: DownloadFormat, callback: (Float, Long, String) -> Unit): Result<DownloadResult> {
+    fun search(query: String): Result<List<com.example.ytmusicdownloader.data.SearchResult>> {
+        return try {
+            val request = YoutubeDLRequest("ytsearch10:$query")
+            request.addOption("--dump-json")
+            request.addOption("--flat-playlist") // Get only metadata, faster
+            
+            val response = YoutubeDL.getInstance().execute(request)
+            val results = mutableListOf<com.example.ytmusicdownloader.data.SearchResult>()
+            
+            // Output contains one JSON object per line for each video in the search result
+            response.out.lines().forEach { line ->
+                if (line.isNotBlank()) {
+                    try {
+                        val json = org.json.JSONObject(line)
+                        results.add(
+                            com.example.ytmusicdownloader.data.SearchResult(
+                                videoId = json.optString("id"),
+                                title = json.optString("title"),
+                                thumbnailUrl = "https://i.ytimg.com/vi/${json.optString("id")}/mqdefault.jpg", // Fallback thumb
+                                duration = formatDuration(json.optInt("duration", 0)),
+                                channel = json.optString("uploader")
+                            )
+                        )
+                    } catch (e: Exception) {
+                        // Ignore malformed lines
+                    }
+                }
+            }
+            Result.success(results)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun getVideoInfo(url: String): Result<com.example.ytmusicdownloader.data.VideoDetail> {
+        return try {
+            val request = YoutubeDLRequest(url)
+            request.addOption("--dump-json")
+            
+            val response = YoutubeDL.getInstance().execute(request)
+            val json = org.json.JSONObject(response.out)
+            
+            val formats = mutableListOf<com.example.ytmusicdownloader.data.VideoFormat>()
+            val jsonFormats = json.optJSONArray("formats")
+            
+            if (jsonFormats != null) {
+                for (i in 0 until jsonFormats.length()) {
+                    val f = jsonFormats.getJSONObject(i)
+                    // Filter mainly for mp4/m4a to keep it simple, or typical useful formats
+                    val ext = f.optString("ext")
+                    if (ext == "mp4" || ext == "m4a" || ext == "webm") {
+                         formats.add(
+                            com.example.ytmusicdownloader.data.VideoFormat(
+                                formatId = f.optString("format_id"),
+                                ext = ext,
+                                resolution = f.optString("resolution", "audio only"),
+                                fileSize = f.optLong("filesize", 0),
+                                acodec = f.optString("acodec"),
+                                vcodec = f.optString("vcodec"),
+                                note = f.optString("format_note")
+                            )
+                        )
+                    }
+                }
+            }
+            
+            // Dedup/Sort formats if needed, for now just returning all relevant
+            
+            val detail = com.example.ytmusicdownloader.data.VideoDetail(
+                id = json.optString("id"),
+                title = json.optString("title"),
+                thumbnailUrl = json.optString("thumbnail"),
+                formats = formats
+            )
+            
+            Result.success(detail)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun formatDuration(seconds: Int): String {
+        val m = seconds / 60
+        val s = seconds % 60
+        return "%02d:%02d".format(m, s)
+    }
+
+    fun download(url: String, dir: File, formatId: String, callback: (Float, Long, String) -> Unit): Result<DownloadResult> {
         return try {
             val request = YoutubeDLRequest(url)
             request.addOption("-o", "${dir.absolutePath}/%(title)s.%(ext)s")
-            
-            if (format == DownloadFormat.AUDIO) {
-                request.addOption("-x") // Extract audio
-                request.addOption("--audio-format", "mp3")
-            } else {
-                request.addOption("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
-            }
-
-            var title = "Unknown Title"
-            
-            // Note: In a real app we might want to fetch metadata first to get the title properly
-            // Or parse the output. For now, we will rely on successful execution.
+            request.addOption("-f", formatId)
             
             YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, line ->
                 callback(progress, etaInSeconds, line ?: "")
             }
             
-            // Warning: Finding the exact file name is tricky without parsing valid output.
-            // For now, we return the directory or assume the newest file in the dir is ours.
-            // A better approach would be using --print-json to get filename before download.
-            // But for simplicity in this walkthrough:
+            // Best guess for the file
             val downloadedFile = dir.listFiles()?.maxByOrNull { it.lastModified() } ?: dir
-            title = downloadedFile.nameWithoutExtension
-
-            Result.success(DownloadResult(downloadedFile, title, if(format == DownloadFormat.AUDIO) "MP3" else "Video"))
+            Result.success(DownloadResult(downloadedFile, downloadedFile.nameWithoutExtension, formatId))
         } catch (e: Exception) {
             Log.e(TAG, "Download failed", e)
             Result.failure(e)
