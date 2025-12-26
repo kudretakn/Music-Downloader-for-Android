@@ -2,7 +2,7 @@ package com.example.ytmusicdownloader
 
 import android.content.Context
 import android.util.Log
-import com.yausername.youtubedl_android.FFmpeg
+import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import java.io.File
