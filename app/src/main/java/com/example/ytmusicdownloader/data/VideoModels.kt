@@ -12,6 +12,8 @@ data class VideoDetail(
     val id: String,
     val title: String,
     val thumbnailUrl: String?,
+    val duration: String,
+    val uploader: String,
     val formats: List<VideoFormat>
 )
 

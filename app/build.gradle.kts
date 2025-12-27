@@ -21,9 +21,9 @@ android {
         }
         
         ndk {
-            abiFilters.add("x86")
+            // Android 15 / Modern devices are often 64-bit only.
+            // Including 32-bit libs can cause crashes if the OS tries to load them and fails.
             abiFilters.add("x86_64")
-            abiFilters.add("armeabi-v7a")
             abiFilters.add("arm64-v8a")
         }
     }
@@ -50,6 +50,9 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }
@@ -80,5 +83,10 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    
+    // Architecture & Image Loading
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
+    implementation("io.coil-kt:coil-compose:2.5.0")
 }

@@ -10,13 +10,31 @@ import java.io.File
 object YoutubeDLClient {
     private const val TAG = "YoutubeDLClient"
 
-    fun init(context: Context) {
-        try {
+    private var initResult: Result<Unit>? = null
+
+    fun init(context: Context): Result<Unit> {
+        if (initResult != null) return initResult!!
+        
+        return try {
             YoutubeDL.getInstance().init(context)
             FFmpeg.getInstance().init(context)
-            YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.STABLE)
-        } catch (e: Exception) {
+            
+            initResult = Result.success(Unit)
+            initResult!!
+        } catch (e: Throwable) {
             Log.e(TAG, "failed to initialize youtubedl-android", e)
+            initResult = Result.failure(e)
+            initResult!!
+        }
+    }
+
+    fun update(context: Context): Result<Unit> {
+        return try {
+            YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.STABLE)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "failed to update youtubedl-android", e)
+            Result.failure(e)
         }
     }
 
@@ -53,6 +71,46 @@ object YoutubeDLClient {
                                 channel = json.optString("uploader")
                             )
                         )
+                    } catch (e: Exception) {
+                        // Ignore malformed lines
+                    }
+                }
+            }
+            Result.success(results)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun getPlaylistInfo(url: String): Result<List<com.example.ytmusicdownloader.data.SearchResult>> {
+        return try {
+            val request = YoutubeDLRequest(url)
+            request.addOption("--dump-json")
+            request.addOption("--flat-playlist") // Essential to avoid downloading info for every video
+            
+            val response = YoutubeDL.getInstance().execute(request)
+            val results = mutableListOf<com.example.ytmusicdownloader.data.SearchResult>()
+            
+            // Output usually contains one JSON object per line per video for flat-playlist
+            response.out.lines().forEach { line ->
+                if (line.isNotBlank()) {
+                    try {
+                        val json = org.json.JSONObject(line)
+                        val id = json.optString("id")
+                        val title = json.optString("title")
+                        val uploader = json.optString("uploader", "")
+                        
+                        if (id.isNotEmpty() && title.isNotEmpty()) {
+                             results.add(
+                                com.example.ytmusicdownloader.data.SearchResult(
+                                    videoId = id,
+                                    title = title,
+                                    thumbnailUrl = "https://i.ytimg.com/vi/$id/mqdefault.jpg",
+                                    duration = formatDuration(json.optInt("duration", 0).toInt()),
+                                    channel = uploader
+                                )
+                            )
+                        }
                     } catch (e: Exception) {
                         // Ignore malformed lines
                     }
@@ -102,6 +160,8 @@ object YoutubeDLClient {
                 id = json.optString("id"),
                 title = json.optString("title"),
                 thumbnailUrl = json.optString("thumbnail"),
+                duration = formatDuration(json.optInt("duration", 0)),
+                uploader = json.optString("uploader"),
                 formats = formats
             )
             
